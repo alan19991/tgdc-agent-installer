@@ -5,8 +5,9 @@ AGENT_DIR="${AGENT_DIR:-/opt/tgdc-agent}"
 AGENT_PORT="${AGENT_PORT:-9101}"
 SERVICE_NAME="tgdc-agent"
 
-echo "[1/6] 安装依赖..."
+echo "[1/7] Install dependencies..."
 if command -v apt >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
   apt update -y
   apt install -y python3-venv python3-full curl
 elif command -v dnf >/dev/null 2>&1; then
@@ -14,19 +15,23 @@ elif command -v dnf >/dev/null 2>&1; then
 elif command -v yum >/dev/null 2>&1; then
   yum install -y python3 python3-pip curl
 else
-  echo "不支持的包管理器"; exit 1
+  echo "Unsupported package manager"
+  exit 1
 fi
 
-echo "[2/6] 创建目录..."
+echo "[2/7] Prepare directory..."
 mkdir -p "${AGENT_DIR}"
 
-echo "[3/6] 写入 Agent..."
+echo "[3/7] Write agent code..."
 cat > "${AGENT_DIR}/tgdc_probe_agent.py" << 'PY'
 from flask import Flask, jsonify
-import socket, time, os
+import socket
+import time
+import os
 
 app = Flask(__name__)
 
+# Telegram DC1-DC5 common endpoints
 DC = {
     "dc1": ("149.154.175.50", 443),
     "dc2": ("149.154.167.50", 443),
@@ -38,14 +43,16 @@ DC = {
 TIMEOUT = float(os.getenv("TGDC_TIMEOUT", "2.5"))
 
 def ping_tcp(host, port, timeout=2.5):
-    s = time.perf_counter()
+    start = time.perf_counter()
     with socket.create_connection((host, port), timeout=timeout):
         pass
-    return round((time.perf_counter() - s) * 1000, 2)
+    return round((time.perf_counter() - start) * 1000, 2)
 
 @app.get("/tgdc-latency")
-def tgdc():
-    out, vals, errs = {}, [], []
+def tgdc_latency():
+    out = {}
+    vals = []
+    errs = []
     for k, (h, p) in DC.items():
         try:
             v = ping_tcp(h, p, TIMEOUT)
@@ -72,12 +79,12 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=port)
 PY
 
-echo "[4/6] 创建 venv 并安装依赖..."
+echo "[4/7] Create virtualenv and install Python deps..."
 python3 -m venv "${AGENT_DIR}/.venv"
 "${AGENT_DIR}/.venv/bin/pip" install --upgrade pip
 "${AGENT_DIR}/.venv/bin/pip" install flask
 
-echo "[5/6] 写入 systemd 服务..."
+echo "[5/7] Write systemd service..."
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
 [Unit]
 Description=TGDC Probe Agent
@@ -97,11 +104,11 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-echo "[6/6] 启动服务..."
+echo "[6/7] Enable & start service..."
 systemctl daemon-reload
 systemctl enable --now "${SERVICE_NAME}"
 
-# 防火墙放行（有就执行）
+echo "[7/7] Open firewall port if available..."
 if command -v ufw >/dev/null 2>&1; then
   ufw allow "${AGENT_PORT}/tcp" || true
 fi
@@ -111,9 +118,11 @@ if command -v firewall-cmd >/dev/null 2>&1; then
 fi
 
 echo
-echo "安装完成"
-systemctl --no-pager status "${SERVICE_NAME}" | head -n 15
+echo "Install done."
+echo "Service status:"
+systemctl --no-pager status "${SERVICE_NAME}" | head -n 20
+
 echo
-echo "本机测试:"
+echo "Local test:"
 curl -s "http://127.0.0.1:${AGENT_PORT}/healthz" && echo
 curl -s "http://127.0.0.1:${AGENT_PORT}/tgdc-latency" && echo
