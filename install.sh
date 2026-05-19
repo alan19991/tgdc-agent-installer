@@ -31,13 +31,11 @@ import os
 
 app = Flask(__name__)
 
-# Telegram DC1-DC5 common endpoints
+# 按你的要求：新加坡 / 美国 / 荷兰
 DC = {
-    "dc1": ("149.154.175.50", 443),
-    "dc2": ("149.154.167.50", 443),
-    "dc3": ("149.154.175.100", 443),
-    "dc4": ("149.154.167.91", 443),
-    "dc5": ("149.154.171.5", 443),
+    "sg": ("149.154.171.5", 443),   # Singapore
+    "us": ("149.154.175.50", 443),  # USA
+    "nl": ("149.154.167.50", 443),  # Netherlands
 }
 
 TIMEOUT = float(os.getenv("TGDC_TIMEOUT", "2.5"))
@@ -53,6 +51,7 @@ def tgdc_latency():
     out = {}
     vals = []
     errs = []
+
     for k, (h, p) in DC.items():
         try:
             v = ping_tcp(h, p, TIMEOUT)
@@ -61,13 +60,33 @@ def tgdc_latency():
         except Exception as e:
             out[k] = None
             errs.append(f"{k}:{type(e).__name__}")
+
     ok = any(v is not None for v in out.values())
+    best = min(vals) if vals else None
+
+    # 兼容你现有后台字段：
+    # dc1~dc5 里只映射你现在需要的3个，其他给 None
+    # 这里约定:
+    # dc1 -> sg
+    # dc2 -> us
+    # dc3 -> nl
+    # dc4/dc5 -> None
     return jsonify({
         "ok": ok,
         "message": "ok" if ok else "all timeout",
-        "tg_dc_latency_ms": min(vals) if vals else None,
-        "errors": errs[:5],
-        **out
+        "tg_dc_latency_ms": best,
+
+        "sg": out.get("sg"),
+        "us": out.get("us"),
+        "nl": out.get("nl"),
+
+        "dc1": out.get("sg"),
+        "dc2": out.get("us"),
+        "dc3": out.get("nl"),
+        "dc4": None,
+        "dc5": None,
+
+        "errors": errs[:5]
     })
 
 @app.get("/healthz")
